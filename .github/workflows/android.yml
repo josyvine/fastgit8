@@ -65,6 +65,40 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x gradlew
 
+      # --- OPENSLL AES-256 IN-MEMORY PAYLOAD ENCRYPTION STEP ---
+      - name: Build and Encrypt Core Payload
+        env:
+          PAYLOAD_PASSPHRASE: "FastGit_Master_Secret_2026"
+        run: |
+          mkdir -p app/src/main/assets
+          mkdir -p build/payload_dex
+
+          # 1. Compile release Kotlin bytecode classes
+          ./gradlew compileReleaseKotlin
+
+          # 2. Locate Android D8 build tool and platform SDK
+          D8_TOOL=$(find $ANDROID_HOME/build-tools -name d8 | sort -V | tail -n 1)
+          PLATFORM_JAR=$(find $ANDROID_HOME/platforms -name "android.jar" | sort -V | tail -n 1)
+          echo "Found D8 Tool at: $D8_TOOL"
+          echo "Found Platform JAR at: $PLATFORM_JAR"
+
+          # 3. Locate compiled release classes (excluding StubApplication)
+          CLASS_DIR="app/build/tmp/kotlin-classes/release"
+          CLASS_FILES=$(find "$CLASS_DIR" -type f -name "*.class" ! -name "StubApplication*")
+
+          # 4. Compile classes into standalone payload DEX
+          $D8_TOOL --lib "$PLATFORM_JAR" --release --output build/payload_dex $CLASS_FILES
+
+          # 5. Encrypt payload DEX with OpenSSL AES-256-CBC PBKDF2
+          openssl enc -aes-256-cbc -salt -pbkdf2 \
+            -in build/payload_dex/classes.dex \
+            -out app/src/main/assets/payload.bin \
+            -k "$PAYLOAD_PASSPHRASE"
+
+          # 6. Purge the unencrypted intermediate DEX file from runner storage
+          rm -rf build/payload_dex
+          echo "Payload DEX successfully encrypted into app/src/main/assets/payload.bin"
+
       # FIX 3: Aligned the environment variables to match exactly what your build.gradle.kts expects
       # Added KEY_ALIAS env variable with 'fastgit' as the fallback to align with the build script
       - name: Build Release APK
