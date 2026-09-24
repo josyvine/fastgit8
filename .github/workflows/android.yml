@@ -73,8 +73,8 @@ jobs:
           mkdir -p app/src/main/assets
           mkdir -p build/payload_dex
 
-          # 1. Compile release Kotlin bytecode classes
-          ./gradlew compileReleaseKotlin
+          # 1. Compile all release sources (Kotlin, KSP generated code, Java)
+          ./gradlew compileReleaseSources
 
           # 2. Locate Android D8 build tool and platform SDK
           D8_TOOL=$(find $ANDROID_HOME/build-tools -name d8 | sort -V | tail -n 1)
@@ -82,9 +82,15 @@ jobs:
           echo "Found D8 Tool at: $D8_TOOL"
           echo "Found Platform JAR at: $PLATFORM_JAR"
 
-          # 3. Locate compiled release classes (excluding StubApplication)
-          CLASS_DIR="app/build/tmp/kotlin-classes/release"
-          CLASS_FILES=$(find "$CLASS_DIR" -type f -name "*.class" ! -name "StubApplication*")
+          # 3. Dynamically search all compiled release class files in app/build (excluding tests and StubApplication)
+          CLASS_FILES=$(find app/build -type f -name "*.class" ! -name "StubApplication*" ! -path "*/test*" ! -path "*/androidTest*")
+
+          if [ -z "$CLASS_FILES" ]; then
+            echo "::error::No compiled class files found in app/build!"
+            exit 1
+          fi
+
+          echo "Packaging $(echo "$CLASS_FILES" | wc -w) class files into payload DEX..."
 
           # 4. Compile classes into standalone payload DEX
           $D8_TOOL --lib "$PLATFORM_JAR" --release --output build/payload_dex $CLASS_FILES
