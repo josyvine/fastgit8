@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Debug
 import android.os.Environment
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -24,6 +25,7 @@ import com.vineyard.fastgit.app.ui.theme.FastGitTheme
 import com.vineyard.fastgit.app.utils.AppLogger
 import com.vineyard.fastgit.app.viewmodel.AuthViewModel
 import com.vineyard.fastgit.app.viewmodel.SettingsViewModel
+import kotlin.system.exitProcess
 
 class MainActivity : ComponentActivity() {
 
@@ -42,6 +44,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Anti-Debugging Guard: Terminate process immediately if debugger is attached to release build
+        if (!BuildConfig.DEBUG && (Debug.isDebuggerConnected() || Debug.waitingForDebugger())) {
+            finishAffinity()
+            exitProcess(0)
+        }
+
         enableEdgeToEdge()
 
         // Initialize Global Crash Handler & Public SDCARD Log directory 'fastgit log'
