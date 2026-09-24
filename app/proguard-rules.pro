@@ -2,7 +2,7 @@
 # 1. Anti-Debugging & Metadata Stripping (Anti-Zip Decompilation)
 # ===================================================================
 
-# Strip all Android Logcat calls (d, v, i, w, e) from release bytecode
+# Strip all Android Logcat calls from release bytecode
 -assumenosideeffects class android.util.Log {
     public static *** d(...);
     public static *** v(...);
@@ -16,7 +16,7 @@
 -renamesourcefileattribute ''
 -keepattributes !SourceFile,!LineNumberTable,!LocalVariableTable,!LocalVariableTypeTable,!MethodParameters
 
-# Preserve required annotations and generic signatures for Retrofit & Kotlin Coroutines
+# Preserve required annotations and generic signatures
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
 # ===================================================================
@@ -66,7 +66,12 @@
 -keep @androidx.room.Entity class * { *; }
 -keep @androidx.room.Dao interface * { *; }
 
-# LazySodium and Java Native Access (JNA) binaries and JNI wrappers
+# LazySodium and Java Native Access (JNA) native bindings
 -keep class com.goterl.lazysodium.** { *; }
 -keep class com.sun.jna.** { *; }
 -keepclassmembers class * extends com.sun.jna.** { *; }
+
+# FIX FOR JNA DESKTOP AWT DEPENDENCY:
+# Tell R8 to ignore missing desktop Java AWT classes that don't exist on Android
+-dontwarn java.awt.**
+-dontwarn com.sun.jna.**
