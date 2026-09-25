@@ -93,3 +93,13 @@
 -keep class kotlinx.coroutines.** { *; }
 -keep interface kotlinx.coroutines.** { *; }
 -dontwarn kotlinx.coroutines.**
+
+# ===================================================================
+# 6. Kotlin Runtime & Standard Library (Intrinsics & Reflection)
+# ===================================================================
+
+# Prevents R8 from stripping or inlining Kotlin runtime internals required by external DEX
+-keep class kotlin.jvm.internal.** { *; }
+-keep class kotlin.** { *; }
+-keep interface kotlin.** { *; }
+-dontwarn kotlin.**
