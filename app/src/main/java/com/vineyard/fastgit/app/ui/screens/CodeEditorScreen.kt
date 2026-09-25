@@ -836,8 +836,8 @@ private fun FastScrollLineIndicatorBadge(
 
 /**
  * 100% crash-proof windowed syntax highlighting computation.
- * Initialized with fullText directly so builder.length is always fullText.length,
- * preventing any IllegalArgumentException in Jetpack Compose.
+ * Initialized directly with fullText so builder.length == fullText.length,
+ * completely preventing any IllegalArgumentException in Jetpack Compose.
  */
 private fun computeWindowedHighlightedText(
     fullText: String,
@@ -852,7 +852,7 @@ private fun computeWindowedHighlightedText(
         return SyntaxHighlighter.highlight(fullText, fileName)
     }
 
-    // For large files, window around the viewport
+    // For large files (e.g. 3,000+ lines), window around the viewport
     val windowHalfSize = 100
     val startLine = (centerLine - windowHalfSize).coerceAtLeast(1)
     val endLine = (centerLine + windowHalfSize).coerceAtMost(totalLines)
@@ -884,7 +884,7 @@ private fun computeWindowedHighlightedText(
     // Highlight only the window slice
     val highlightedWindow = SyntaxHighlighter.highlight(windowText, fileName)
 
-    // Crash-proof builder: initialize directly with fullText so builder.length == fullText.length
+    // Crash-proof builder: pre-populated with fullText so builder.length is ALWAYS fullText.length
     val builder = AnnotatedString.Builder(fullText)
     for (span in highlightedWindow.spanStyles) {
         val s = startIndex + span.start
