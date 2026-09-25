@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import dalvik.system.InMemoryDexClassLoader
 import java.io.InputStream
+import java.lang.reflect.Array
 import java.lang.reflect.Method
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
@@ -92,8 +93,9 @@ class StubApplication : Application() {
             val payloadLoader = PayloadClassLoader(dexByteBuffer, baseClassLoader)
             this.customClassLoader = payloadLoader
 
-            // 8. Safely inject into Android's LoadedApk and ContextImpl
+            // 8. Safely inject into Android's LoadedApk, ContextImpl, and system PathList dexElements
             replaceApplicationClassLoader(context, payloadLoader)
+            payloadLoader.injectIntoPathList(baseClassLoader)
 
         } catch (exception: Exception) {
             exception.printStackTrace()
@@ -163,6 +165,60 @@ class StubApplication : Application() {
         private val inMemoryLoader = InMemoryDexClassLoader(dexBuffer, parent)
         private val findClassMethod: Method = ClassLoader::class.java.getDeclaredMethod("findClass", String::class.java).apply {
             isAccessible = true
+        }
+
+        fun injectIntoPathList(pathClassLoader: ClassLoader) {
+            try {
+                val systemPathList = getField(pathClassLoader.javaClass, pathClassLoader as Any, "pathList") ?: return
+                val payloadPathList = getField(inMemoryLoader.javaClass, inMemoryLoader as Any, "pathList") ?: return
+
+                val systemElements = getField(systemPathList.javaClass, systemPathList, "dexElements") ?: return
+                val payloadElements = getField(payloadPathList.javaClass, payloadPathList, "dexElements") ?: return
+
+                val componentType = systemElements.javaClass.componentType ?: return
+                val systemLength = Array.getLength(systemElements)
+                val payloadLength = Array.getLength(payloadElements)
+
+                val mergedElements = Array.newInstance(componentType, systemLength + payloadLength)
+                for (i in 0 until systemLength) {
+                    Array.set(mergedElements, i, Array.get(systemElements, i))
+                }
+                for (i in 0 until payloadLength) {
+                    Array.set(mergedElements, systemLength + i, Array.get(payloadElements, i))
+                }
+
+                setField(systemPathList.javaClass, systemPathList, "dexElements", mergedElements)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        private fun getField(clazz: Class<*>, target: Any, fieldName: String): Any? {
+            var current: Class<*>? = clazz
+            while (current != null) {
+                try {
+                    val field = current.getDeclaredField(fieldName)
+                    field.isAccessible = true
+                    return field.get(target)
+                } catch (e: NoSuchFieldException) {
+                    current = current.superclass
+                }
+            }
+            return null
+        }
+
+        private fun setField(clazz: Class<*>, target: Any, fieldName: String, value: Any?) {
+            var current: Class<*>? = clazz
+            while (current != null) {
+                try {
+                    val field = current.getDeclaredField(fieldName)
+                    field.isAccessible = true
+                    field.set(target, value)
+                    return
+                } catch (e: NoSuchFieldException) {
+                    current = current.superclass
+                }
+            }
         }
 
         override fun loadClass(name: String, resolve: Boolean): Class<*> {
