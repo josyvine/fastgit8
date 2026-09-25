@@ -126,12 +126,12 @@ fun CodeEditorScreen(
         lastHighlightedCenterLine = targetCenter
     }
 
-    // Scroll-triggered viewport highlighting for large files (debounced to preserve 120 FPS gestures)
+    // Scroll-triggered viewport highlighting for large files (debounced to preserve 60/120 FPS gestures)
     LaunchedEffect(currentTopVisibleLine, lineCount) {
         if (lineCount > 350) {
             val delta = abs(currentTopVisibleLine - lastHighlightedCenterLine)
             if (delta >= 40) {
-                delay(100) // Debounce rapid continuous scrolling
+                delay(120) // Debounce rapid continuous scrolling
                 val targetCenter = currentTopVisibleLine
                 val highlighted = withContext(Dispatchers.Default) {
                     computeWindowedHighlightedText(codeText, fileItem.name, lineCount, targetCenter)
@@ -835,10 +835,9 @@ private fun FastScrollLineIndicatorBadge(
 }
 
 /**
- * High-performance windowed syntax highlighting computation.
- * For small files (<= 350 lines), it highlights the entire file at once.
- * For large files (> 350 lines, up to 100,000+ lines), it tokenizes a generous 200-line window around
- * the active viewport, keeping the span count minimal so Jetpack Compose renders at 60/120 FPS.
+ * 100% crash-proof windowed syntax highlighting computation.
+ * Initialized with fullText directly so builder.length is always fullText.length,
+ * preventing any IllegalArgumentException in Jetpack Compose.
  */
 private fun computeWindowedHighlightedText(
     fullText: String,
@@ -853,7 +852,7 @@ private fun computeWindowedHighlightedText(
         return SyntaxHighlighter.highlight(fullText, fileName)
     }
 
-    // For large files (e.g. 3,000+ lines), highlight a window around the viewport
+    // For large files, window around the viewport
     val windowHalfSize = 100
     val startLine = (centerLine - windowHalfSize).coerceAtLeast(1)
     val endLine = (centerLine + windowHalfSize).coerceAtMost(totalLines)
@@ -863,21 +862,17 @@ private fun computeWindowedHighlightedText(
     var endIndex = fullText.length
 
     for (i in fullText.indices) {
-        if (currentLine == startLine && startIndex == 0 && startLine > 1) {
-            startIndex = i
+        if (currentLine < startLine && fullText[i] == '\n') {
+            startIndex = i + 1
         }
         if (fullText[i] == '\n') {
             currentLine++
-            if (currentLine == startLine && startIndex == 0) {
-                startIndex = i + 1
-            }
             if (currentLine > endLine) {
                 endIndex = i
                 break
             }
         }
     }
-    if (startLine == 1) startIndex = 0
     startIndex = startIndex.coerceIn(0, fullText.length)
     endIndex = endIndex.coerceIn(startIndex, fullText.length)
 
@@ -889,22 +884,14 @@ private fun computeWindowedHighlightedText(
     // Highlight only the window slice
     val highlightedWindow = SyntaxHighlighter.highlight(windowText, fileName)
 
-    // Build the full AnnotatedString with matching length and character indices
-    val builder = AnnotatedString.Builder(fullText.length)
-    if (startIndex > 0) {
-        builder.append(fullText.substring(0, startIndex))
-    }
-    val windowStartInBuilder = builder.length
-    builder.append(highlightedWindow.text)
+    // Crash-proof builder: initialize directly with fullText so builder.length == fullText.length
+    val builder = AnnotatedString.Builder(fullText)
     for (span in highlightedWindow.spanStyles) {
-        builder.addStyle(
-            style = span.item,
-            start = (windowStartInBuilder + span.start).coerceIn(0, fullText.length),
-            end = (windowStartInBuilder + span.end).coerceIn(0, fullText.length)
-        )
-    }
-    if (endIndex < fullText.length) {
-        builder.append(fullText.substring(endIndex))
+        val s = startIndex + span.start
+        val e = startIndex + span.end
+        if (s in 0..fullText.length && e in s..fullText.length) {
+            builder.addStyle(span.item, s, e)
+        }
     }
 
     return builder.toAnnotatedString()
