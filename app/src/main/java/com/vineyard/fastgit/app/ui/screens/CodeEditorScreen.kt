@@ -21,7 +21,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
@@ -43,7 +42,6 @@ import com.vineyard.fastgit.app.ui.theme.*
 import com.vineyard.fastgit.app.utils.SyntaxHighlighter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -58,7 +56,6 @@ fun CodeEditorScreen(
     onDownloadClick: (content: String) -> Unit
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
 
     // State variables for editor contents
     var codeText by remember(initialContent) { mutableStateOf(initialContent) }
@@ -96,33 +93,56 @@ fun CodeEditorScreen(
         }.toString()
     }
 
-    // Asynchronous syntax highlighting to prevent UI thread blocking on initial render
-    var highlightedText by remember(initialContent, fileItem.name) {
-        mutableStateOf(
-            if (initialContent.isEmpty()) {
-                AnnotatedString("")
-            } else if (initialContent.length > 25000 || lineCount > 500) {
-                AnnotatedString(initialContent)
-            } else {
-                SyntaxHighlighter.highlight(initialContent, fileItem.name)
-            }
-        )
+    val verticalScrollState = rememberScrollState()
+    val horizontalScrollState = rememberScrollState()
+
+    // Derived current top-visible line index (1-based)
+    val currentTopVisibleLine by remember(verticalScrollState, lineCount) {
+        derivedStateOf {
+            val maxScroll = verticalScrollState.maxValue
+            if (maxScroll > 0) {
+                val fraction = (verticalScrollState.value.toFloat() / maxScroll).coerceIn(0f, 1f)
+                (fraction * (lineCount - 1)).roundToInt() + 1
+            } else 1
+        }
     }
 
+    var lastHighlightedCenterLine by remember { mutableIntStateOf(1) }
+    var highlightedText by remember(initialContent) {
+        mutableStateOf(AnnotatedString(initialContent))
+    }
+
+    // Initial and content-change syntax highlighting
     LaunchedEffect(codeText, fileItem.name) {
         if (codeText.isEmpty()) {
             highlightedText = AnnotatedString("")
             return@LaunchedEffect
         }
-        withContext(Dispatchers.Default) {
-            val highlighted = SyntaxHighlighter.highlight(codeText, fileItem.name)
-            withContext(Dispatchers.Main) {
+        val targetCenter = currentTopVisibleLine
+        val highlighted = withContext(Dispatchers.Default) {
+            computeWindowedHighlightedText(codeText, fileItem.name, lineCount, targetCenter)
+        }
+        highlightedText = highlighted
+        lastHighlightedCenterLine = targetCenter
+    }
+
+    // Scroll-triggered viewport highlighting for large files (debounced to preserve 120 FPS gestures)
+    LaunchedEffect(currentTopVisibleLine, lineCount) {
+        if (lineCount > 350) {
+            val delta = abs(currentTopVisibleLine - lastHighlightedCenterLine)
+            if (delta >= 40) {
+                delay(100) // Debounce rapid continuous scrolling
+                val targetCenter = currentTopVisibleLine
+                val highlighted = withContext(Dispatchers.Default) {
+                    computeWindowedHighlightedText(codeText, fileItem.name, lineCount, targetCenter)
+                }
                 highlightedText = highlighted
+                lastHighlightedCenterLine = targetCenter
             }
         }
     }
 
-    // VisualTransformation guarded against any length divergence to prevent OffsetMapping crashes
+    // VisualTransformation guarded against length divergence to guarantee safety
     val visualTransformation = remember(highlightedText, codeText) {
         VisualTransformation { text ->
             if (text.text.isEmpty() || highlightedText.text.length != text.text.length) {
@@ -161,7 +181,7 @@ fun CodeEditorScreen(
                     }
                 },
                 actions = {
-                    // Collapsible Actions Dropdown (Search & Replace, Copy, Paste, Cut, Delete)
+                    // Actions Dropdown (Search & Replace, Copy, Paste, Cut, Delete)
                     Box {
                         IconButton(onClick = { showMenuDropdown = true }) {
                             Icon(
@@ -343,9 +363,6 @@ fun CodeEditorScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            val verticalScrollState = rememberScrollState()
-            val horizontalScrollState = rememberScrollState()
-
             // State for the left-side fast-scroll handle
             var isHandleDragging by remember { mutableStateOf(false) }
             var isHandleVisible by remember { mutableStateOf(false) }
@@ -455,13 +472,10 @@ fun CodeEditorScreen(
                                 onVerticalDrag = { change, dragAmount ->
                                     change.consume()
                                     val maxScroll = verticalScrollState.maxValue
-                                    if (maxScroll > 0) {
-                                        val currentY = (verticalScrollState.value.toFloat() / maxScroll) * usableTrackHeightPx
-                                        val newY = (currentY + dragAmount).coerceIn(0f, usableTrackHeightPx)
-                                        val targetScroll = ((newY / usableTrackHeightPx) * maxScroll).roundToInt()
-                                        coroutineScope.launch {
-                                            verticalScrollState.scrollTo(targetScroll)
-                                        }
+                                    if (maxScroll > 0 && usableTrackHeightPx > 0f) {
+                                        // Synchronously dispatch raw delta to avoid flooding Main Looper with coroutines
+                                        val scrollDelta = (dragAmount / usableTrackHeightPx) * maxScroll
+                                        verticalScrollState.dispatchRawDelta(scrollDelta)
                                     }
                                 }
                             )
@@ -818,4 +832,80 @@ private fun FastScrollLineIndicatorBadge(
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
         )
     }
+}
+
+/**
+ * High-performance windowed syntax highlighting computation.
+ * For small files (<= 350 lines), it highlights the entire file at once.
+ * For large files (> 350 lines, up to 100,000+ lines), it tokenizes a generous 200-line window around
+ * the active viewport, keeping the span count minimal so Jetpack Compose renders at 60/120 FPS.
+ */
+private fun computeWindowedHighlightedText(
+    fullText: String,
+    fileName: String,
+    totalLines: Int,
+    centerLine: Int
+): AnnotatedString {
+    if (fullText.isEmpty()) return AnnotatedString("")
+
+    // For smaller files, highlighting the full file is fast and lightweight
+    if (totalLines <= 350) {
+        return SyntaxHighlighter.highlight(fullText, fileName)
+    }
+
+    // For large files (e.g. 3,000+ lines), highlight a window around the viewport
+    val windowHalfSize = 100
+    val startLine = (centerLine - windowHalfSize).coerceAtLeast(1)
+    val endLine = (centerLine + windowHalfSize).coerceAtMost(totalLines)
+
+    var currentLine = 1
+    var startIndex = 0
+    var endIndex = fullText.length
+
+    for (i in fullText.indices) {
+        if (currentLine == startLine && startIndex == 0 && startLine > 1) {
+            startIndex = i
+        }
+        if (fullText[i] == '\n') {
+            currentLine++
+            if (currentLine == startLine && startIndex == 0) {
+                startIndex = i + 1
+            }
+            if (currentLine > endLine) {
+                endIndex = i
+                break
+            }
+        }
+    }
+    if (startLine == 1) startIndex = 0
+    startIndex = startIndex.coerceIn(0, fullText.length)
+    endIndex = endIndex.coerceIn(startIndex, fullText.length)
+
+    val windowText = fullText.substring(startIndex, endIndex)
+    if (windowText.isEmpty()) {
+        return AnnotatedString(fullText)
+    }
+
+    // Highlight only the window slice
+    val highlightedWindow = SyntaxHighlighter.highlight(windowText, fileName)
+
+    // Build the full AnnotatedString with matching length and character indices
+    val builder = AnnotatedString.Builder(fullText.length)
+    if (startIndex > 0) {
+        builder.append(fullText.substring(0, startIndex))
+    }
+    val windowStartInBuilder = builder.length
+    builder.append(highlightedWindow.text)
+    for (span in highlightedWindow.spanStyles) {
+        builder.addStyle(
+            style = span.item,
+            start = (windowStartInBuilder + span.start).coerceIn(0, fullText.length),
+            end = (windowStartInBuilder + span.end).coerceIn(0, fullText.length)
+        )
+    }
+    if (endIndex < fullText.length) {
+        builder.append(fullText.substring(endIndex))
+    }
+
+    return builder.toAnnotatedString()
 }
