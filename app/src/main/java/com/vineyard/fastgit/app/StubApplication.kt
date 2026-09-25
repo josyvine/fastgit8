@@ -2,10 +2,9 @@ package com.vineyard.fastgit.app
 
 import android.app.Application
 import android.content.Context
-import dalvik.system.BaseDexClassLoader
+import android.content.ContextWrapper
 import dalvik.system.InMemoryDexClassLoader
 import java.io.InputStream
-import java.lang.reflect.Array as JavaArray
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.security.spec.KeySpec
@@ -16,6 +15,12 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 class StubApplication : Application() {
+
+    private var customClassLoader: ClassLoader? = null
+
+    override fun getClassLoader(): ClassLoader {
+        return customClassLoader ?: super.getClassLoader()
+    }
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
@@ -40,7 +45,7 @@ class StubApplication : Application() {
                 return
             }
 
-            // Verify OpenSSL magic header
+            // Verify OpenSSL magic header ("Salted__")
             val headerString = String(rawBytes, 0, 8, StandardCharsets.US_ASCII)
             if (headerString != OPENSSL_MAGIC_HEADER) {
                 return
@@ -78,38 +83,108 @@ class StubApplication : Application() {
             cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec)
             val decryptedDexBytes = cipher.doFinal(cipherText)
 
-            // 6. Wrap into a direct ByteBuffer
+            // 6. Wrap into a ByteBuffer
             val dexByteBuffer = ByteBuffer.wrap(decryptedDexBytes)
 
-            // 7. Inject in-memory DEX elements directly into the application's PathClassLoader
-            val baseClassLoader = context.classLoader as? BaseDexClassLoader ?: return
-            val inMemoryDexClassLoader = InMemoryDexClassLoader(dexByteBuffer, baseClassLoader)
+            // 7. Instantiate Child-First PayloadClassLoader pointing to base PathClassLoader as parent
+            val baseClassLoader = context.classLoader
+            val payloadLoader = PayloadClassLoader(dexByteBuffer, baseClassLoader)
+            this.customClassLoader = payloadLoader
 
-            val pathListField = BaseDexClassLoader::class.java.getDeclaredField("pathList").apply {
-                isAccessible = true
-            }
-            val basePathList = pathListField.get(baseClassLoader) ?: return
-            val inMemoryPathList = pathListField.get(inMemoryDexClassLoader) ?: return
-
-            val dexElementsField = basePathList.javaClass.getDeclaredField("dexElements").apply {
-                isAccessible = true
-            }
-            val baseElements = dexElementsField.get(basePathList) as? Array<*> ?: return
-            val inMemoryElements = dexElementsField.get(inMemoryPathList) as? Array<*> ?: return
-
-            val combinedElements = JavaArray.newInstance(
-                baseElements.javaClass.componentType!!,
-                baseElements.size + inMemoryElements.size
-            )
-
-            // Place inMemoryElements first so decrypted payload takes precedence
-            System.arraycopy(inMemoryElements, 0, combinedElements, 0, inMemoryElements.size)
-            System.arraycopy(baseElements, 0, combinedElements, inMemoryElements.size, baseElements.size)
-
-            dexElementsField.set(basePathList, combinedElements)
+            // 8. Safely inject into Android's LoadedApk and ContextImpl
+            replaceApplicationClassLoader(context, payloadLoader)
 
         } catch (exception: Exception) {
             exception.printStackTrace()
+        }
+    }
+
+    private fun replaceApplicationClassLoader(context: Context, newClassLoader: ClassLoader) {
+        try {
+            // Update Context Thread
+            Thread.currentThread().contextClassLoader = newClassLoader
+
+            // Unwrap Context to get ContextImpl
+            var currentContext: Any? = context
+            while (currentContext is ContextWrapper) {
+                currentContext = currentContext.baseContext
+            }
+
+            if (currentContext != null) {
+                val contextImplClass = currentContext.javaClass
+                setFieldValue(contextImplClass, currentContext, "mClassLoader", newClassLoader)
+
+                // Replace in LoadedApk so Android uses it for all Activities & ViewModels
+                val loadedApk = getFieldValue(contextImplClass, currentContext, "mPackageInfo")
+                if (loadedApk != null) {
+                    setFieldValue(loadedApk.javaClass, loadedApk, "mClassLoader", newClassLoader)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun setFieldValue(clazz: Class<*>, target: Any, fieldName: String, value: Any?) {
+        var current: Class<*>? = clazz
+        while (current != null) {
+            try {
+                val field = current.getDeclaredField(fieldName)
+                field.isAccessible = true
+                field.set(target, value)
+                return
+            } catch (e: NoSuchFieldException) {
+                current = current.superclass
+            }
+        }
+    }
+
+    private fun getFieldValue(clazz: Class<*>, target: Any, fieldName: String): Any? {
+        var current: Class<*>? = clazz
+        while (current != null) {
+            try {
+                val field = current.getDeclaredField(fieldName)
+                field.isAccessible = true
+                return field.get(target)
+            } catch (e: NoSuchFieldException) {
+                current = current.superclass
+            }
+        }
+        return null
+    }
+
+    /**
+     * Custom in-memory ClassLoader that loads payload classes first,
+     * but falls back to parent (PathClassLoader) for Kotlin stdlib and APK libraries.
+     */
+    private class PayloadClassLoader(
+        dexBuffer: ByteBuffer,
+        parent: ClassLoader
+    ) : InMemoryDexClassLoader(dexBuffer, parent) {
+
+        override fun loadClass(name: String, resolve: Boolean): Class<*> {
+            // Let the framework handle Java and Android system packages directly
+            if (name.startsWith("java.") || name.startsWith("javax.") || name.startsWith("android.")) {
+                return super.loadClass(name, resolve)
+            }
+
+            // 1. Return already loaded class if present
+            val loaded = findLoadedClass(name)
+            if (loaded != null) {
+                return loaded
+            }
+
+            // 2. Try loading class from the in-memory decrypted payload DEX first
+            return try {
+                val clazz = findClass(name)
+                if (resolve) {
+                    resolveClass(clazz)
+                }
+                clazz
+            } catch (e: ClassNotFoundException) {
+                // 3. Fallback to parent (APK PathClassLoader) for Kotlin runtime, AndroidX, Compose, etc.
+                super.loadClass(name, resolve)
+            }
         }
     }
 
