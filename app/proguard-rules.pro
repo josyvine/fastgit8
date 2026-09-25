@@ -2,7 +2,7 @@
 # 1. Anti-Debugging & Metadata Stripping (Anti-Zip Decompilation)
 # ===================================================================
 
-# Strip all Android Logcat calls from release bytecode
+# Strip all standard Android system Logcat calls from release bytecode
 -assumenosideeffects class android.util.Log {
     public static *** d(...);
     public static *** v(...);
@@ -12,9 +12,12 @@
     public static *** println(...);
 }
 
-# Remove debugging source file names, line number tables, and local variables
--renamesourcefileattribute ''
--keepattributes !SourceFile,!LineNumberTable,!LocalVariableTable,!LocalVariableTypeTable,!MethodParameters
+# Obfuscate source file names (replaces all original .kt/.java file names with 'SourceFile' in decompilers)
+-renamesourcefileattribute 'SourceFile'
+
+# Strip local variables and parameter names so decompilers only see p0, p1, v0
+# Keeps LineNumberTable so AppLogger can generate stack traces without failing
+-keepattributes SourceFile,LineNumberTable,!LocalVariableTable,!LocalVariableTypeTable,!MethodParameters
 
 # Preserve required annotations and generic signatures
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
@@ -117,3 +120,11 @@
 # Keep AppLogger, crash handlers, LogEntry, and all utility classes completely intact
 -keep class com.vineyard.fastgit.app.utils.** { *; }
 -keepclassmembers class com.vineyard.fastgit.app.utils.** { *; }
+
+# ===================================================================
+# 8. ViewModels & Architecture Components
+# ===================================================================
+
+# Protect ViewModels from reflection destruction during Compose navigation
+-keep class com.vineyard.fastgit.app.viewmodel.** { *; }
+-keepclassmembers class com.vineyard.fastgit.app.viewmodel.** { *; }
