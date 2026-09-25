@@ -61,10 +61,23 @@
 # 4. Database & Cryptographic Libraries (Room & LazySodium / JNA)
 # ===================================================================
 
-# Room database abstractions, entities, and DAOs
--keep class * extends androidx.room.RoomDatabase
+# Room database runtime and core classes
+-keep class androidx.room.** { *; }
+-dontwarn androidx.room.**
+
+# Keep all Room database classes, entities, DAOs, and generated _Impl classes
+-keep class * extends androidx.room.RoomDatabase { *; }
+-keep class com.vineyard.fastgit.app.database.** { *; }
+-keepinterface com.vineyard.fastgit.app.database.** { *; }
+-keepclassmembers class com.vineyard.fastgit.app.database.** { *; }
+-keepclassmembers interface com.vineyard.fastgit.app.database.** { *; }
+-keep class * extends com.vineyard.fastgit.app.database.** { *; }
+-keep class * implements com.vineyard.fastgit.app.database.** { *; }
+
+# Preserve Room annotations
 -keep @androidx.room.Entity class * { *; }
 -keep @androidx.room.Dao interface * { *; }
+-keep @androidx.room.Database class * { *; }
 
 # LazySodium and Java Native Access (JNA) native bindings
 -keep class com.goterl.lazysodium.** { *; }
