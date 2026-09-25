@@ -407,12 +407,19 @@ class RepoDetailViewModel(
                 } else {
                     val api = RetrofitClient.getService(tokenManager)
                     val details = api.getSingleFileContent(owner, repoName, fileItem.path, _currentBranch.value)
+                    
+                    // Direct Base64 decode without redundant intermediate String allocations
                     val decoded = if (details.encoding == "base64" && details.content != null) {
-                        val cleanB64 = details.content.replace("\n", "").replace("\r", "")
-                        String(Base64.decode(cleanB64, Base64.DEFAULT), Charsets.UTF_8)
+                        try {
+                            val decodedBytes = Base64.decode(details.content, Base64.DEFAULT)
+                            String(decodedBytes, Charsets.UTF_8)
+                        } catch (e: Exception) {
+                            details.content
+                        }
                     } else {
                         details.content ?: ""
                     }
+                    
                     val updatedFileItem = fileItem.copy(sha = details.sha ?: fileItem.sha)
                     withContext(Dispatchers.Main) {
                         _fileContent.value = decoded
@@ -802,8 +809,7 @@ class RepoDetailViewModel(
                     try {
                         val single = api.getSingleFileContent(owner, repo, item.path, branch)
                         val bytes = if (single.encoding == "base64" && single.content != null) {
-                            val cleanB64 = single.content.replace("\n", "").replace("\r", "")
-                            Base64.decode(cleanB64, Base64.DEFAULT)
+                            Base64.decode(single.content, Base64.DEFAULT)
                         } else {
                             single.content?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
                         }
@@ -1043,7 +1049,12 @@ class RepoDetailViewModel(
                 for (file in textFiles) {
                     val rawContent = file.content ?: continue
                     val text = if (file.encoding == "base64") {
-                        try { String(Base64.decode(rawContent.replace("\n", "").replace("\r", ""), Base64.DEFAULT), Charsets.UTF_8) } catch (e: Exception) { rawContent }
+                        try {
+                            val decoded = Base64.decode(rawContent, Base64.DEFAULT)
+                            String(decoded, Charsets.UTF_8)
+                        } catch (e: Exception) {
+                            rawContent
+                        }
                     } else rawContent
 
                     if (text.contains(searchQuery)) {
@@ -1129,8 +1140,8 @@ class RepoDetailViewModel(
                         String(file.byteContent, Charsets.UTF_8)
                     } else if (file.content != null) {
                         try {
-                            val cleanB64 = file.content.replace("\n", "").replace("\r", "")
-                            String(Base64.decode(cleanB64, Base64.DEFAULT), Charsets.UTF_8)
+                            val decoded = Base64.decode(file.content, Base64.DEFAULT)
+                            String(decoded, Charsets.UTF_8)
                         } catch (e: Exception) {
                             file.content
                         }
