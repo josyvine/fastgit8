@@ -68,7 +68,7 @@
 # Keep all Room database classes, entities, DAOs, and generated _Impl classes
 -keep class * extends androidx.room.RoomDatabase { *; }
 -keep class com.vineyard.fastgit.app.database.** { *; }
--keepinterface com.vineyard.fastgit.app.database.** { *; }
+-keep interface com.vineyard.fastgit.app.database.** { *; }
 -keepclassmembers class com.vineyard.fastgit.app.database.** { *; }
 -keepclassmembers interface com.vineyard.fastgit.app.database.** { *; }
 -keep class * extends com.vineyard.fastgit.app.database.** { *; }
