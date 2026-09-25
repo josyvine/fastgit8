@@ -114,6 +114,11 @@ fun CodeEditorScreen(
             highlightedText = AnnotatedString("")
             return@LaunchedEffect
         }
+        // Guard large files against layout-freezing span overload in BasicTextField
+        if (codeText.length > 25000 || lineCount > 500) {
+            highlightedText = AnnotatedString(codeText)
+            return@LaunchedEffect
+        }
         withContext(Dispatchers.Default) {
             val highlighted = SyntaxHighlighter.highlight(codeText, fileItem.name)
             withContext(Dispatchers.Main) {
@@ -455,13 +460,10 @@ fun CodeEditorScreen(
                                 onVerticalDrag = { change, dragAmount ->
                                     change.consume()
                                     val maxScroll = verticalScrollState.maxValue
-                                    if (maxScroll > 0) {
-                                        val currentY = (verticalScrollState.value.toFloat() / maxScroll) * usableTrackHeightPx
-                                        val newY = (currentY + dragAmount).coerceIn(0f, usableTrackHeightPx)
-                                        val targetScroll = ((newY / usableTrackHeightPx) * maxScroll).roundToInt()
-                                        coroutineScope.launch {
-                                            verticalScrollState.scrollTo(targetScroll)
-                                        }
+                                    if (maxScroll > 0 && usableTrackHeightPx > 0f) {
+                                        // Synchronously dispatch raw delta to avoid flooding Main Looper with coroutines
+                                        val scrollDelta = (dragAmount / usableTrackHeightPx) * maxScroll
+                                        verticalScrollState.dispatchRawDelta(scrollDelta)
                                     }
                                 }
                             )
