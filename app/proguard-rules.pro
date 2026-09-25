@@ -109,3 +109,11 @@
 -keep class kotlin.** { *; }
 -keep interface kotlin.** { *; }
 -dontwarn kotlin.**
+
+# ===================================================================
+# 7. App Logger & Crash Reporting Protection
+# ===================================================================
+
+# Keep AppLogger, crash handlers, LogEntry, and all utility classes completely intact
+-keep class com.vineyard.fastgit.app.utils.** { *; }
+-keepclassmembers class com.vineyard.fastgit.app.utils.** { *; }
