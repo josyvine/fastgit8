@@ -18,18 +18,6 @@ object SyntaxHighlighter {
     private val SEARCH_MATCH_BG = Color(0xFFF2CC60).copy(alpha = 0.45f) // Golden highlight for search matches
     private val SEARCH_MATCH_TEXT = Color(0xFFFFFFFF)
 
-    // Pre-allocated static SpanStyles to eliminate tens of thousands of GC heap allocations per pass
-    private val KEYWORD_STYLE = SpanStyle(color = KEYWORD_COLOR, fontFamily = FontFamily.Monospace)
-    private val STRING_STYLE = SpanStyle(color = STRING_COLOR, fontFamily = FontFamily.Monospace)
-    private val COMMENT_STYLE = SpanStyle(color = COMMENT_COLOR, fontFamily = FontFamily.Monospace)
-    private val NUMBER_STYLE = SpanStyle(color = NUMBER_COLOR, fontFamily = FontFamily.Monospace)
-    private val ANNOTATION_STYLE = SpanStyle(color = ANNOTATION_COLOR, fontFamily = FontFamily.Monospace)
-    private val SEARCH_MATCH_STYLE = SpanStyle(
-        background = SEARCH_MATCH_BG,
-        color = SEARCH_MATCH_TEXT,
-        fontWeight = FontWeight.Bold
-    )
-
     private val KEYWORDS = setOf(
         "abstract", "assert", "boolean", "break", "byte", "case", "catch", "class", "const",
         "continue", "default", "do", "double", "else", "enum", "extends", "final", "finally",
@@ -46,7 +34,7 @@ object SyntaxHighlighter {
     // Precompiled linear-time regex with zero catastrophic backtracking
     private val COMBINED_PATTERN = Pattern.compile(
         "(//[^\\r\\n]*|/\\*[\\s\\S]*?\\*/|#[^\\r\\n]*)" +                           // Group 1: Comments
-        "|(\"(?:\\\\.|[^\"\\r\\n\\\\])*\"|'(?:\\\\.|[^'\\r\\n\\\\])*')" +           // Group 2: Strings
+        "|(\"(?:\\\\.|[^\"\\r\\n\\\\])*\"|'(?:\\\\.|[^'\\r\\n\\\\])*')" +           // Group 2: Strings (linear $O(N)$ execution)
         "|\\b(" + KEYWORDS.joinToString("|") + ")\\b" +                              // Group 3: Keywords
         "|(@\\w+)" +                                                                 // Group 4: Annotations
         "|(\\b\\d+\\b)"                                                              // Group 5: Numbers
@@ -79,23 +67,21 @@ object SyntaxHighlighter {
         }
 
         // Return memoized result instantly if identical input was already styled
-        val lastResult = cachedResult
         if (code == cachedCode &&
             searchQuery == cachedSearchQuery &&
             isCaseSensitive == cachedCaseSensitive &&
             isRegex == cachedIsRegex &&
-            lastResult != null
+            cachedResult != null
         ) {
-            return lastResult
+            return cachedResult!!
         }
 
         val baseBuilder = AnnotatedString.Builder(code)
 
-        // For massive text payloads exceeding 250,000 characters, limit parsing region using regex region
-        // to avoid expensive memory heap copies via substring
+        // For massive text payloads exceeding 250,000 characters, limit regex scope to preserve 60/120fps
         val parseLength = minOf(code.length, 250000)
-        val matcher = COMBINED_PATTERN.matcher(code)
-        matcher.region(0, parseLength)
+        val parseRegion = if (parseLength < code.length) code.substring(0, parseLength) else code
+        val matcher = COMBINED_PATTERN.matcher(parseRegion)
 
         while (matcher.find()) {
             val start = matcher.start()
@@ -103,19 +89,39 @@ object SyntaxHighlighter {
 
             when {
                 matcher.group(1) != null -> { // Comments
-                    baseBuilder.addStyle(COMMENT_STYLE, start, end)
+                    baseBuilder.addStyle(
+                        SpanStyle(color = COMMENT_COLOR, fontFamily = FontFamily.Monospace),
+                        start,
+                        end
+                    )
                 }
                 matcher.group(2) != null -> { // Strings
-                    baseBuilder.addStyle(STRING_STYLE, start, end)
+                    baseBuilder.addStyle(
+                        SpanStyle(color = STRING_COLOR, fontFamily = FontFamily.Monospace),
+                        start,
+                        end
+                    )
                 }
                 matcher.group(3) != null -> { // Keywords
-                    baseBuilder.addStyle(KEYWORD_STYLE, start, end)
+                    baseBuilder.addStyle(
+                        SpanStyle(color = KEYWORD_COLOR, fontFamily = FontFamily.Monospace),
+                        start,
+                        end
+                    )
                 }
                 matcher.group(4) != null -> { // Annotations
-                    baseBuilder.addStyle(ANNOTATION_STYLE, start, end)
+                    baseBuilder.addStyle(
+                        SpanStyle(color = ANNOTATION_COLOR, fontFamily = FontFamily.Monospace),
+                        start,
+                        end
+                    )
                 }
                 matcher.group(5) != null -> { // Numbers
-                    baseBuilder.addStyle(NUMBER_STYLE, start, end)
+                    baseBuilder.addStyle(
+                        SpanStyle(color = NUMBER_COLOR, fontFamily = FontFamily.Monospace),
+                        start,
+                        end
+                    )
                 }
             }
         }
@@ -147,7 +153,11 @@ object SyntaxHighlighter {
                 val matchEnd = searchMatcher.end()
                 if (matchStart < matchEnd) {
                     finalBuilder.addStyle(
-                        style = SEARCH_MATCH_STYLE,
+                        style = SpanStyle(
+                            background = SEARCH_MATCH_BG,
+                            color = SEARCH_MATCH_TEXT,
+                            fontWeight = FontWeight.Bold
+                        ),
                         start = matchStart,
                         end = matchEnd
                     )
