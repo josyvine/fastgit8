@@ -97,19 +97,17 @@ fun RepoDetailScreen(
     }
 
     if (activeFile != null) {
-        key(activeFile!!.path) {
-            CodeEditorScreen(
-                fileItem = activeFile!!,
-                initialContent = fileContent,
-                onBack = { repoDetailViewModel.closeActiveFile() },
-                onSaveAndCommit = { updatedContent, commitMsg ->
-                    repoDetailViewModel.saveAndCommitFile(activeFile!!, updatedContent, commitMsg)
-                },
-                onDownloadClick = { content ->
-                    repoDetailViewModel.downloadSingleFileToDevice(activeFile!!, content, context)
-                }
-            )
-        }
+        CodeEditorScreen(
+            fileItem = activeFile!!,
+            initialContent = fileContent,
+            onBack = { repoDetailViewModel.closeActiveFile() },
+            onSaveAndCommit = { updatedContent, commitMsg ->
+                repoDetailViewModel.saveAndCommitFile(activeFile!!, updatedContent, commitMsg)
+            },
+            onDownloadClick = { content ->
+                repoDetailViewModel.downloadSingleFileToDevice(activeFile!!, content, context)
+            }
+        )
         return
     }
 
@@ -678,10 +676,16 @@ fun ExplorerTabContent(
         }
     }
 
+    var isRefreshing by remember { mutableStateOf(false) }
+
     PullToRefreshBox(
-        isRefreshing = isLoading,
+        isRefreshing = isRefreshing,
         onRefresh = {
-            repoDetailViewModel.refreshExplorer()
+            isRefreshing = true
+            coroutineScope.launch {
+                repoDetailViewModel.refreshExplorer()
+                isRefreshing = false
+            }
         },
         modifier = Modifier.fillMaxSize()
     ) {
@@ -2006,13 +2010,18 @@ fun ActionsTabContent(
 ) {
     val workflows by repoDetailViewModel.workflows.collectAsState()
     val workflowRuns by repoDetailViewModel.workflowRuns.collectAsState()
-    val isLoading by repoDetailViewModel.isLoading.collectAsState()
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var isRefreshing by remember { mutableStateOf(false) }
 
     PullToRefreshBox(
-        isRefreshing = isLoading,
+        isRefreshing = isRefreshing,
         onRefresh = {
-            repoDetailViewModel.refreshWorkflows()
+            isRefreshing = true
+            coroutineScope.launch {
+                repoDetailViewModel.refreshWorkflows()
+                isRefreshing = false
+            }
         },
         modifier = Modifier.fillMaxSize()
     ) {
@@ -2211,4 +2220,3 @@ private fun copyFullTextToClipboard(context: Context, label: String, text: Strin
         }
     }
 }
-
