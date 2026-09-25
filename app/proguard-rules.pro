@@ -42,7 +42,25 @@
 -keep class * extends androidx.core.content.FileProvider
 
 # ===================================================================
-# 3. Model Serialization & Networking (Moshi & Retrofit)
+# 3. Dynamic Payload Runtime Dependencies (CRITICAL FIX)
+# Because payload.bin is loaded dynamically at runtime via InMemoryDexClassLoader,
+# R8 cannot inspect its references and will strip Kotlin runtime and Coroutines.
+# ===================================================================
+
+-keep class kotlin.** { *; }
+-keep interface kotlin.** { *; }
+-dontwarn kotlin.**
+
+-keep class kotlinx.** { *; }
+-keep interface kotlinx.** { *; }
+-dontwarn kotlinx.**
+
+-keep class androidx.** { *; }
+-keep interface androidx.** { *; }
+-dontwarn androidx.**
+
+# ===================================================================
+# 4. Model Serialization & Networking (Moshi & Retrofit)
 # ===================================================================
 
 # Moshi JSON adapters and codegen classes
@@ -58,7 +76,7 @@
 }
 
 # ===================================================================
-# 4. Database & Cryptographic Libraries (Room & LazySodium / JNA)
+# 5. Database & Cryptographic Libraries (Room & LazySodium / JNA)
 # ===================================================================
 
 # Room database runtime and core classes
