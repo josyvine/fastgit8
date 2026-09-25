@@ -51,20 +51,29 @@
 }
 -keep class com.vineyard.fastgit.app.models.** { *; }
 -keep class * extends com.squareup.moshi.JsonAdapter
+-keep class com.squareup.moshi.** { *; }
 
 # Retrofit service interfaces and dynamic proxy methods
--keepclassmembers,allowobfuscation interface * {
+-keep class retrofit2.** { *; }
+-keepclasseswithmembers class * {
     @retrofit2.http.* <methods>;
 }
+
+# Coil Image Loader
+-keep class coil.** { *; }
 
 # ===================================================================
 # 4. Database & Cryptographic Libraries (Room & LazySodium / JNA)
 # ===================================================================
 
 # Room database abstractions, entities, and DAOs
+-keep class androidx.room.** { *; }
+-dontwarn androidx.room.**
 -keep class * extends androidx.room.RoomDatabase
 -keep @androidx.room.Entity class * { *; }
 -keep @androidx.room.Dao interface * { *; }
+-keep interface com.vineyard.fastgit.app.database.** { *; }
+-keep class com.vineyard.fastgit.app.database.** { *; }
 
 # LazySodium and Java Native Access (JNA) native bindings
 -keep class com.goterl.lazysodium.** { *; }
@@ -75,3 +84,12 @@
 # Tell R8 to ignore missing desktop Java AWT classes that don't exist on Android
 -dontwarn java.awt.**
 -dontwarn com.sun.jna.**
+
+# ===================================================================
+# 5. Kotlin Coroutines & Flow (Cross-Dex Signature Synchronization)
+# ===================================================================
+
+# Preserves Coroutine Flow method descriptors across InMemoryDexClassLoader and APK
+-keep class kotlinx.coroutines.** { *; }
+-keep interface kotlinx.coroutines.** { *; }
+-dontwarn kotlinx.coroutines.**
