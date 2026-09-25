@@ -42,7 +42,7 @@
 -keep class * extends androidx.core.content.FileProvider
 
 # ===================================================================
-# 3. Model Serialization & Networking (Moshi & Retrofit)
+# 3. Model Serialization & Networking (Moshi, Retrofit, & OkHttp)
 # ===================================================================
 
 # Moshi JSON adapters and codegen classes
@@ -50,14 +50,20 @@
     @com.squareup.moshi.Json *;
 }
 -keep class com.vineyard.fastgit.app.models.** { *; }
+-keepclassmembers class com.vineyard.fastgit.app.models.** { *; }
 -keep class * extends com.squareup.moshi.JsonAdapter
 -keep class com.squareup.moshi.** { *; }
 
-# Retrofit service interfaces and dynamic proxy methods
+# Network API response data classes (WorkflowRunJobsResponse, WorkflowJob, WorkflowStep)
+-keep class com.vineyard.fastgit.app.network.** { *; }
+-keepclassmembers class com.vineyard.fastgit.app.network.** { *; }
+
+# Retrofit service interfaces, proxy methods, and OkHttp streams
 -keep class retrofit2.** { *; }
 -keepclasseswithmembers class * {
     @retrofit2.http.* <methods>;
 }
+-keep class okhttp3.** { *; }
 
 # Coil Image Loader
 -keep class coil.** { *; }
