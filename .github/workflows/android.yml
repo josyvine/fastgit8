@@ -36,7 +36,6 @@ jobs:
           echo "Keystore successfully decoded. Size: $(wc -c < ${{ github.workspace }}/safevoice.jks) bytes"
 
       # FIX 2: Safeguard the printing step so empty environment credentials don't hang the runner
-      # Updated the default alias fallback from 'viaro' to your correct alias 'fastgit'
       - name: Print Keystore SHA Fingerprints
         env:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || vars.KEY_ALIAS || 'fastgit' }}
@@ -51,17 +50,18 @@ jobs:
             -alias "$KEY_ALIAS" \
             -storepass "$KEYSTORE_PASSWORD"
 
-      # Setup a modern version of Gradle on the virtual runner machine compatible with AGP 9.1.1
+      # Setup Gradle with cache-disabled to force clean recompilation with updated rules
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.3.1
+          cache-disabled: true
 
       # Generate a fresh, uncorrupted Gradle wrapper binary using Gradle 9.3.1
       - name: Regenerate Gradle Wrapper
         run: gradle wrapper
 
-      # Grant execute permission to the Gradle wrapper script to resolve permission denied error
+      # Grant execute permission to the Gradle wrapper script
       - name: Make Gradlew Executable
         run: chmod +x gradlew
 
@@ -73,8 +73,8 @@ jobs:
           mkdir -p app/src/main/assets
           mkdir -p build/payload_dex
 
-          # 1. Compile all release sources (Kotlin, KSP generated code, Java)
-          ./gradlew compileReleaseSources
+          # 1. Clean and force fresh compilation without using old cached binaries
+          ./gradlew clean compileReleaseSources --no-build-cache
 
           # 2. Locate Android D8 build tool and platform SDK
           D8_TOOL=$(find $ANDROID_HOME/build-tools -name d8 | sort -V | tail -n 1)
@@ -92,8 +92,8 @@ jobs:
 
           echo "Packaging $(echo "$CLASS_FILES" | wc -w) class files into payload DEX..."
 
-          # 4. Compile classes into standalone payload DEX
-          $D8_TOOL --lib "$PLATFORM_JAR" --release --output build/payload_dex $CLASS_FILES
+          # 4. Compile classes into standalone payload DEX with min-api 26 matching app minSdk
+          $D8_TOOL --lib "$PLATFORM_JAR" --min-api 26 --release --output build/payload_dex $CLASS_FILES
 
           # 5. Encrypt payload DEX with OpenSSL AES-256-CBC PBKDF2
           openssl enc -aes-256-cbc -salt -pbkdf2 \
@@ -105,17 +105,16 @@ jobs:
           rm -rf build/payload_dex
           echo "Payload DEX successfully encrypted into app/src/main/assets/payload.bin"
 
-      # FIX 3: Aligned the environment variables to match exactly what your build.gradle.kts expects
-      # Added KEY_ALIAS env variable with 'fastgit' as the fallback to align with the build script
+      # FIX 3: Build Release APK cleanly without stale build cache
       - name: Build Release APK
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --no-build-cache
         env:
-          KEYSTORE_PATH: ${{ github.workspace }}/safevoice.jks # Matches Gradle expect variables
-          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || vars.KEYSTORE_PASSWORD }} # Matches Gradle expect variables
+          KEYSTORE_PATH: ${{ github.workspace }}/safevoice.jks
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || vars.KEYSTORE_PASSWORD }}
           KEY_PASSWORD:  ${{ secrets.KEY_PASSWORD || vars.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || vars.KEY_ALIAS || 'fastgit' }}
 
-      # FIX 4: Use a wildcard match for the path so the upload does not fail if your file is named differently
+      # FIX 4: Upload generated release APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
