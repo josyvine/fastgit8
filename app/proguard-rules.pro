@@ -17,7 +17,7 @@
 -keepattributes !SourceFile,!LineNumberTable,!LocalVariableTable,!LocalVariableTypeTable,!MethodParameters
 
 # Preserve required annotations and generic signatures
--keepattributes Annotation,Signature,InnerClasses,EnclosingMethod
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
 # ===================================================================
 # 2. In-Memory Loader & Stub Application Protection
@@ -47,7 +47,7 @@
 
 # Moshi JSON adapters and codegen classes
 -keepclassmembers class * {
-    @com.squareup.moshi.Json <fields>;
+    @com.squareup.moshi.Json *;
 }
 -keep class com.vineyard.fastgit.app.models.** { *; }
 -keep class * extends com.squareup.moshi.JsonAdapter
@@ -69,8 +69,9 @@
 # LazySodium and Java Native Access (JNA) native bindings
 -keep class com.goterl.lazysodium.** { *; }
 -keep class com.sun.jna.** { *; }
--keepclassmembers class * extends com.sun.jna.* { *; }
+-keepclassmembers class * extends com.sun.jna.** { *; }
 
+# FIX FOR JNA DESKTOP AWT DEPENDENCY:
 # Tell R8 to ignore missing desktop Java AWT classes that don't exist on Android
 -dontwarn java.awt.**
 -dontwarn com.sun.jna.**
