@@ -157,10 +157,8 @@
 -keep class androidx.compose.animation.** { *; }
 -keep class androidx.compose.material3.** { *; }
 
-# Core Icons used by MainScreen tabs and dialogs
--keep class androidx.compose.material.icons.Icons { *; }
--keep class androidx.compose.material.icons.Icons$** { *; }
--keep class androidx.compose.material.icons.filled.** { *; }
+# Core, Filled, and AutoMirrored icons (fixes ExitToAppKt and all settings/tab icons)
+-keep class androidx.compose.material.icons.** { *; }
 
 -dontwarn androidx.compose.**
 
