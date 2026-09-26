@@ -145,17 +145,21 @@
 -dontwarn androidx.lifecycle.**
 
 # ===================================================================
-# 10. Jetpack Compose Core Engine (WITHOUT bloated icon packs)
+# 10. Jetpack Compose Core Engine & Material Icons
 # ===================================================================
 
-# Fixes ComposableLambdaKt and Compose runtime crashes
+# Essential runtime (fixes ComposableLambdaKt)
 -keep class androidx.compose.runtime.** { *; }
 
-# Preserves UI, Foundation, and Material 3 rendering engines
+# Essential UI foundations & Material3
 -keep class androidx.compose.ui.** { *; }
 -keep class androidx.compose.foundation.** { *; }
 -keep class androidx.compose.animation.** { *; }
 -keep class androidx.compose.material3.** { *; }
 
-# Allow R8 to strip unused material extended icons to keep APK size small
+# Core Icons used by MainScreen tabs and dialogs
+-keep class androidx.compose.material.icons.Icons { *; }
+-keep class androidx.compose.material.icons.Icons$** { *; }
+-keep class androidx.compose.material.icons.filled.** { *; }
+
 -dontwarn androidx.compose.**
