@@ -163,3 +163,14 @@
 -keep class androidx.compose.material.icons.filled.** { *; }
 
 -dontwarn androidx.compose.**
+
+# ===================================================================
+# 11. Android Generated Resource IDs (R Classes)
+# ===================================================================
+
+# Prevent R8 from inlining and discarding generated R inner classes
+-keep class com.vineyard.fastgit.app.R { *; }
+-keep class com.vineyard.fastgit.app.R$* { *; }
+-keepclassmembers class com.vineyard.fastgit.app.R$* {
+    public static <fields>;
+}
