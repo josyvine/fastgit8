@@ -63,6 +63,11 @@ fun RepoDetailScreen(
     val uploadStep by repoDetailViewModel.uploadStep.collectAsState()
     val uploadProgress by repoDetailViewModel.uploadProgress.collectAsState()
 
+    // Visual Deletion Progress State Collectors
+    val isDeletingFiles by repoDetailViewModel.isDeletingFiles.collectAsState()
+    val deleteStep by repoDetailViewModel.deleteStep.collectAsState()
+    val deleteProgress by repoDetailViewModel.deleteProgress.collectAsState()
+
     // Smart Refactoring Progress State Collectors
     val isRefactoring by repoDetailViewModel.isRefactoring.collectAsState()
     val refactorStep by repoDetailViewModel.refactorStep.collectAsState()
@@ -539,6 +544,79 @@ fun RepoDetailScreen(
                 }
             },
             containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
+
+    // Visual File & Folder Deletion Progress Dialog (Adopted from ZIP Upload flow)
+    if (isDeletingFiles) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteForever,
+                        contentDescription = null,
+                        tint = GhErrorRed,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Deleting Repository Files",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(
+                        text = "Scanning, committing file removals, and updating tree hierarchy...",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+
+                    LinearProgressIndicator(
+                        progress = { deleteProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = GhErrorRed,
+                        trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = deleteStep,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "${(deleteProgress * 100).toInt()}%",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GhErrorRed
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { repoDetailViewModel.cancelFileDeletion() }) {
+                    Text("Cancel", color = GhErrorRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(12.dp)
         )
     }
 
