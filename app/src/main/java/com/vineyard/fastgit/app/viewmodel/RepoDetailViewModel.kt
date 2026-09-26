@@ -17,11 +17,13 @@ import com.vineyard.fastgit.app.utils.AppLogger
 import com.vineyard.fastgit.app.utils.DownloadUtils
 import com.vineyard.fastgit.app.utils.TokenManager
 import com.vineyard.fastgit.app.utils.ZipUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -36,6 +38,7 @@ class RepoDetailViewModel(
 
     private val tokenManager = TokenManager(application)
     private var pollingJob: Job? = null
+    private var deleteJob: Job? = null
 
     // Repository state
     private val _repository = MutableStateFlow<Repository?>(null)
@@ -101,6 +104,16 @@ class RepoDetailViewModel(
 
     private val _uploadProgress = MutableStateFlow(0f)
     val uploadProgress: StateFlow<Float> = _uploadProgress
+
+    // Progress State for Visual File/Folder Deletion
+    private val _isDeletingFiles = MutableStateFlow(false)
+    val isDeletingFiles: StateFlow<Boolean> = _isDeletingFiles
+
+    private val _deleteStep = MutableStateFlow("")
+    val deleteStep: StateFlow<String> = _deleteStep
+
+    private val _deleteProgress = MutableStateFlow(0f)
+    val deleteProgress: StateFlow<Float> = _deleteProgress
 
     // Progress State for Smart Refactoring
     private val _isRefactoring = MutableStateFlow(false)
@@ -703,6 +716,196 @@ class RepoDetailViewModel(
         }
     }
 
+    fun cancelFileDeletion() {
+        deleteJob?.cancel()
+        _isDeletingFiles.value = false
+        _statusMessage.value = "Deletion cancelled"
+        AppLogger.i("Delete", "File deletion process cancelled by user")
+    }
+
+    fun deleteItem(item: FileItem) {
+        deleteJob?.cancel()
+        deleteJob = viewModelScope.launch(Dispatchers.IO) {
+            _isDeletingFiles.value = true
+            _deleteProgress.value = 0.05f
+            _deleteStep.value = "Scanning items to delete..."
+
+            AppLogger.i("Delete", "Starting visual deletion process for: ${item.path}")
+
+            try {
+                if (tokenManager.isDemoMode()) {
+                    fun collectAllFiles(node: FileItem): List<FileItem> {
+                        val files = mutableListOf<FileItem>()
+                        if (node.type == "file") {
+                            files.add(node)
+                        } else {
+                            for (child in node.children) {
+                                files.addAll(collectAllFiles(child))
+                            }
+                        }
+                        return files
+                    }
+
+                    val targetFiles = collectAllFiles(item)
+                    val total = if (targetFiles.isNotEmpty()) targetFiles.size else 1
+                    var deletedCount = 0
+
+                    if (targetFiles.isEmpty()) {
+                        deletedCount = 1
+                        _deleteProgress.value = 1.0f
+                        _deleteStep.value = "Processing (1/1): ${item.name}"
+                        delay(400)
+                    } else {
+                        for (file in targetFiles) {
+                            if (!isActive) break
+                            deletedCount++
+                            val progressRatio = (deletedCount.toFloat() / total)
+                            _deleteProgress.value = progressRatio
+                            _deleteStep.value = "Processing ($deletedCount/$total): ${file.path}"
+                            delay(120)
+                        }
+                    }
+
+                    fun removeRecursive(list: List<FileItem>): List<FileItem> {
+                        return list.filter { it.path != item.path }.map {
+                            if (it.children.isNotEmpty()) it.copy(children = removeRecursive(it.children).toMutableList()) else it
+                        }
+                    }
+
+                    val updatedTree = removeRecursive(_treeItems.value)
+                    withContext(Dispatchers.Main) {
+                        _treeItems.value = updatedTree
+                        _statusMessage.value = "Deleted '${item.name}'"
+                        _isDeletingFiles.value = false
+                    }
+                    return@launch
+                }
+
+                val api = RetrofitClient.getService(tokenManager)
+
+                if (item.type == "dir") {
+                    _deleteStep.value = "Scanning directory structure..."
+                    _deleteProgress.value = 0.10f
+
+                    // Pass 1: Collect all files to delete recursively
+                    val filesToDelete = mutableListOf<FileItem>()
+                    suspend fun scanDirectoryForFiles(dirPath: String) {
+                        if (!isActive) return
+                        val children = try {
+                            api.getContents(owner, repoName, dirPath, _currentBranch.value)
+                        } catch (e: Exception) {
+                            emptyList()
+                        }
+                        for (child in children) {
+                            if (!isActive) return
+                            if (child.type == "dir") {
+                                scanDirectoryForFiles(child.path)
+                            } else {
+                                filesToDelete.add(child)
+                            }
+                        }
+                    }
+
+                    scanDirectoryForFiles(item.path)
+
+                    val total = filesToDelete.size
+                    AppLogger.i("Delete", "Found $total files to delete inside directory ${item.path}")
+
+                    if (total == 0) {
+                        withContext(Dispatchers.Main) {
+                            _deleteProgress.value = 1.0f
+                            _statusMessage.value = "Directory '${item.name}' is already empty"
+                            _isDeletingFiles.value = false
+                        }
+                        return@launch
+                    }
+
+                    var deletedCount = 0
+                    for (file in filesToDelete) {
+                        if (!isActive) break
+                        deletedCount++
+                        val progressRatio = 0.15f + (deletedCount.toFloat() / total) * 0.85f
+                        _deleteProgress.value = progressRatio
+                        _deleteStep.value = "Processing ($deletedCount/$total): ${file.path}"
+
+                        val sha = if (file.sha.isNotBlank()) file.sha else {
+                            try {
+                                val single = api.getSingleFileContent(owner, repoName, file.path, _currentBranch.value)
+                                single.sha
+                            } catch (e: Exception) { "" }
+                        }
+
+                        val body = mapOf(
+                            "message" to "Delete ${file.name} in ${item.path} via FastGit Mobile",
+                            "sha" to sha,
+                            "branch" to _currentBranch.value
+                        )
+
+                        try {
+                            api.deleteFile(owner, repoName, file.path, body)
+                            AppLogger.s("Delete", "Deleted file ($deletedCount/$total): ${file.path}")
+                        } catch (e: Exception) {
+                            AppLogger.e("Delete", "Failed to delete file ${file.path}: ${e.message}", e)
+                        }
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        _deleteProgress.value = 1.0f
+                        _statusMessage.value = "Deleted folder '${item.name}' ($total files removed)!"
+                        _isDeletingFiles.value = false
+                        loadContents(_currentPath.value)
+                    }
+
+                } else {
+                    // Single file deletion with progress dialog
+                    _deleteStep.value = "Processing (1/1): ${item.path}"
+                    _deleteProgress.value = 0.40f
+
+                    val sha = if (item.sha.isNotBlank()) item.sha else {
+                        try {
+                            val single = api.getSingleFileContent(owner, repoName, item.path, _currentBranch.value)
+                            single.sha
+                        } catch (e: Exception) { "" }
+                    }
+
+                    val body = mapOf(
+                        "message" to "Delete ${item.name} via FastGit Mobile",
+                        "sha" to sha,
+                        "branch" to _currentBranch.value
+                    )
+
+                    val resp = api.deleteFile(owner, repoName, item.path, body)
+                    _deleteProgress.value = 1.0f
+
+                    withContext(Dispatchers.Main) {
+                        if (resp.isSuccessful) {
+                            _statusMessage.value = "Deleted '${item.name}'"
+                        } else {
+                            _statusMessage.value = "Delete failed: ${resp.errorBody()?.string() ?: resp.message()}"
+                        }
+                        _isDeletingFiles.value = false
+                        loadContents(_currentPath.value)
+                    }
+                }
+
+            } catch (e: CancellationException) {
+                AppLogger.i("Delete", "Deletion job was cancelled")
+                withContext(Dispatchers.Main) {
+                    _statusMessage.value = "Deletion cancelled"
+                    _isDeletingFiles.value = false
+                    loadContents(_currentPath.value)
+                }
+            } catch (e: Exception) {
+                AppLogger.e("Delete", "Failed to delete ${item.path}: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    _statusMessage.value = "Failed to delete: ${e.message}"
+                    _isDeletingFiles.value = false
+                    loadContents(_currentPath.value)
+                }
+            }
+        }
+    }
+
     fun downloadFolderAsZip(folderItem: FileItem, context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) {
@@ -867,102 +1070,6 @@ class RepoDetailViewModel(
                     _statusMessage.value = "Failed to paste: ${e.message}"
                     _isLoading.value = false
                 }
-            }
-        }
-    }
-
-    fun deleteItem(item: FileItem) {
-        viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) {
-                _isLoading.value = true
-            }
-            try {
-                if (tokenManager.isDemoMode()) {
-                    fun removeRecursive(list: List<FileItem>): List<FileItem> {
-                        return list.filter { it.path != item.path }.map {
-                            if (it.children.isNotEmpty()) it.copy(children = removeRecursive(it.children).toMutableList()) else it
-                        }
-                    }
-                    val updatedTree = removeRecursive(_treeItems.value)
-                    withContext(Dispatchers.Main) {
-                        _treeItems.value = updatedTree
-                        _statusMessage.value = "Deleted '${item.name}'"
-                        _isLoading.value = false
-                    }
-                } else {
-                    val api = RetrofitClient.getService(tokenManager)
-                    if (item.type == "dir") {
-                        withContext(Dispatchers.Main) {
-                            _statusMessage.value = "Deleting folder '${item.name}'..."
-                        }
-                        deleteDirectoryRecursively(api, owner, repoName, item.path, _currentBranch.value)
-                        withContext(Dispatchers.Main) {
-                            _statusMessage.value = "Deleted folder '${item.name}' successfully!"
-                        }
-                    } else {
-                        val sha = if (item.sha.isNotBlank()) item.sha else {
-                            try {
-                                val single = api.getSingleFileContent(owner, repoName, item.path, _currentBranch.value)
-                                single.sha
-                            } catch (e: Exception) { "" }
-                        }
-                        val body = mapOf(
-                            "message" to "Delete ${item.name} via FastGit Mobile",
-                            "sha" to sha,
-                            "branch" to _currentBranch.value
-                        )
-                        val resp = api.deleteFile(owner, repoName, item.path, body)
-                        withContext(Dispatchers.Main) {
-                            if (resp.isSuccessful) {
-                                _statusMessage.value = "Deleted '${item.name}'"
-                            } else {
-                                _statusMessage.value = "Delete failed: ${resp.errorBody()?.string() ?: resp.message()}"
-                            }
-                        }
-                    }
-                    withContext(Dispatchers.Main) {
-                        _isLoading.value = false
-                        loadContents(_currentPath.value)
-                    }
-                }
-            } catch (e: Exception) {
-                AppLogger.e("Delete", "Failed to delete ${item.path}: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    _statusMessage.value = "Failed to delete: ${e.message}"
-                    _isLoading.value = false
-                }
-            }
-        }
-    }
-
-    private suspend fun deleteDirectoryRecursively(
-        api: GitHubApiService,
-        owner: String,
-        repo: String,
-        dirPath: String,
-        branch: String
-    ) {
-        val items = try {
-            api.getContents(owner, repo, dirPath, branch)
-        } catch (e: Exception) {
-            emptyList()
-        }
-        for (child in items) {
-            if (child.type == "dir") {
-                deleteDirectoryRecursively(api, owner, repo, child.path, branch)
-            } else {
-                val sha = if (child.sha.isNotBlank()) child.sha else {
-                    try {
-                        val single = api.getSingleFileContent(owner, repo, child.path, branch)
-                        single.sha
-                    } catch (e: Exception) { "" }
-                }
-                val body = mapOf(
-                    "message" to "Delete ${child.name} in $dirPath via FastGit Mobile",
-                    "sha" to sha,
-                    "branch" to branch
-                )
-                api.deleteFile(owner, repo, child.path, body)
             }
         }
     }
@@ -1850,6 +1957,7 @@ class RepoDetailViewModel(
     override fun onCleared() {
         super.onCleared()
         pollingJob?.cancel()
+        deleteJob?.cancel()
     }
 }
 
