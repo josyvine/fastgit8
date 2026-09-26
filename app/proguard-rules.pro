@@ -130,25 +130,19 @@
 -keepclassmembers class com.vineyard.fastgit.app.viewmodel.** { *; }
 
 # ===================================================================
-# 9. AndroidX Core, Activity, Compose & Lifecycle (InMemoryDex Bridge)
+# 9. AndroidX Core, Activity & Lifecycle Protection (Targeted)
 # ===================================================================
 
-# Prevent R8 from stripping AndroidX Core (e.g., ContextCompat, ActivityCompat)
--keep class androidx.core.** { *; }
--keep interface androidx.core.** { *; }
+-keep class androidx.core.content.ContextCompat { *; }
+-keep class androidx.core.app.ActivityCompat { *; }
+-keep class androidx.core.view.WindowInsetsCompat { *; }
+-keep class androidx.core.view.WindowInsetsControllerCompat { *; }
 -dontwarn androidx.core.**
 
-# Prevent R8 from stripping Activity & EdgeToEdge APIs
--keep class androidx.activity.** { *; }
--keep interface androidx.activity.** { *; }
+-keep class androidx.activity.ComponentActivity { *; }
+-keep class androidx.activity.EdgeToEdge { *; }
 -dontwarn androidx.activity.**
 
-# Prevent R8 from stripping AndroidX Lifecycle & ViewModel providers
--keep class androidx.lifecycle.** { *; }
--keep interface androidx.lifecycle.** { *; }
+-keep class androidx.lifecycle.ViewModel { *; }
+-keep class androidx.lifecycle.ViewModelProvider { *; }
 -dontwarn androidx.lifecycle.**
-
-# Prevent R8 from stripping Jetpack Compose runtime & UI foundations
--keep class androidx.compose.** { *; }
--keep interface androidx.compose.** { *; }
--dontwarn androidx.compose.**
