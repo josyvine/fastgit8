@@ -11,6 +11,7 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
@@ -28,20 +29,22 @@ import com.vineyard.fastgit.app.viewmodel.SettingsViewModel
 class MainActivity : ComponentActivity() {
 
     private var authViewModelInstance: AuthViewModel? = null
-
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val granted = permissions.entries.all { it.value }
-        if (granted) {
-            AppLogger.s("Permissions", "External storage write/read permissions granted by user.")
-        } else {
-            AppLogger.i("Permissions", "Storage permission result received. Logging will proceed to accessible public paths.")
-        }
-    }
+    private var requestPermissionLauncher: ActivityResultLauncher<Array<String>>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize permission launcher after super.onCreate()
+        requestPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            val granted = permissions.entries.all { it.value }
+            if (granted) {
+                AppLogger.s("Permissions", "External storage write/read permissions granted by user.")
+            } else {
+                AppLogger.i("Permissions", "Storage permission result received. Logging will proceed to accessible public paths.")
+            }
+        }
 
         enableEdgeToEdge()
 
@@ -134,7 +137,7 @@ class MainActivity : ComponentActivity() {
             val writePerm = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
             val readPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
             if (writePerm != PackageManager.PERMISSION_GRANTED || readPerm != PackageManager.PERMISSION_GRANTED) {
-                requestPermissionLauncher.launch(
+                requestPermissionLauncher?.launch(
                     arrayOf(
                         Manifest.permission.WRITE_EXTERNAL_STORAGE,
                         Manifest.permission.READ_EXTERNAL_STORAGE
