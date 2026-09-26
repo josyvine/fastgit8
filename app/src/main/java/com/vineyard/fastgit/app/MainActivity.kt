@@ -33,7 +33,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        enableEdgeToEdge()
+        try {
+            enableEdgeToEdge()
+        } catch (e: Throwable) {
+            AppLogger.e("MainActivity", "enableEdgeToEdge not supported: ${e.message}")
+        }
 
         // Initialize Global Crash Handler & Public SDCARD Log directory 'fastgit log'
         AppLogger.initCrashHandler(this)
