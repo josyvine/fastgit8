@@ -14,16 +14,26 @@ import com.vineyard.fastgit.app.network.RetrofitClient
 import com.vineyard.fastgit.app.utils.DownloadUtils
 import com.vineyard.fastgit.app.utils.TokenManager
 import com.vineyard.fastgit.app.utils.ZipUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
+
+data class ImportProgress(
+    val current: Int,
+    val total: Int,
+    val fileName: String,
+    val progress: Float
+)
 
 class AuthViewModel(application: Application) : AndroidViewModel(application) {
     val tokenManager = TokenManager(application)
@@ -508,6 +518,11 @@ class RepositoryViewModel(application: Application) : AndroidViewModel(applicati
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage
 
+    // Granular progress tracking for repo URL import operations
+    private var importJob: Job? = null
+    private val _importProgress = MutableStateFlow<ImportProgress?>(null)
+    val importProgress: StateFlow<ImportProgress?> = _importProgress
+
     init {
         fetchRepositories()
     }
@@ -692,6 +707,15 @@ class RepositoryViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun cancelImport() {
+        importJob?.cancel()
+        importJob = null
+        _importProgress.value = null
+        _isLoading.value = false
+        _statusMessage.value = "Import cancelled by user"
+        com.vineyard.fastgit.app.utils.AppLogger.i("RepositoryViewModel", "Repository import cancelled by user.")
+    }
+
     fun importRepositoryUrl(
         url: String,
         newRepoName: String = "",
@@ -713,9 +737,16 @@ class RepositoryViewModel(application: Application) : AndroidViewModel(applicati
         val sourceRepo = parts[parts.size - 1]
         val targetRepoName = if (newRepoName.isNotBlank()) newRepoName else sourceRepo
 
-        viewModelScope.launch(Dispatchers.IO) {
+        importJob?.cancel()
+        importJob = viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) {
                 _isLoading.value = true
+                _importProgress.value = ImportProgress(
+                    current = 0,
+                    total = 0,
+                    fileName = "Initializing repository import...",
+                    progress = 0f
+                )
                 _statusMessage.value = "Creating new repository '$targetRepoName' and importing files..."
             }
 
@@ -743,6 +774,15 @@ class RepositoryViewModel(application: Application) : AndroidViewModel(applicati
                     val currentUser = try { api.getCurrentUser() } catch (e: Exception) { null }
                     val newOwner = currentUser?.login ?: "developer"
 
+                    withContext(Dispatchers.Main) {
+                        _importProgress.value = ImportProgress(
+                            current = 0,
+                            total = 0,
+                            fileName = "Creating repository '$targetRepoName'...",
+                            progress = 0f
+                        )
+                    }
+
                     val createReq = CreateRepoRequest(
                         name = targetRepoName,
                         description = "Imported copy from $cleanUrl",
@@ -754,6 +794,15 @@ class RepositoryViewModel(application: Application) : AndroidViewModel(applicati
 
                     var filesImportedCount = 0
                     try {
+                        withContext(Dispatchers.Main) {
+                            _importProgress.value = ImportProgress(
+                                current = 0,
+                                total = 0,
+                                fileName = "Downloading source archive ($sourceOwner/$sourceRepo)...",
+                                progress = 0f
+                            )
+                        }
+
                         com.vineyard.fastgit.app.utils.AppLogger.i("RepositoryViewModel", "Downloading source zipball for $sourceOwner/$sourceRepo...")
                         val zipResponse = api.downloadZipball(sourceOwner, sourceRepo, "main")
 
@@ -769,12 +818,36 @@ class RepositoryViewModel(application: Application) : AndroidViewModel(applicati
                                 }
                             }
 
+                            withContext(Dispatchers.Main) {
+                                _importProgress.value = ImportProgress(
+                                    current = 0,
+                                    total = 0,
+                                    fileName = "Extracting files...",
+                                    progress = 0f
+                                )
+                            }
+
                             val extractedFiles = ZipUtils.unzip(tempZip.inputStream(), tempDir)
                             val scannedFiles = ZipUtils.scanDirectory(tempDir)
+                            val totalFiles = scannedFiles.size
 
                             com.vineyard.fastgit.app.utils.AppLogger.i("RepositoryViewModel", "Scanned ${scannedFiles.size} files from source repository.")
 
-                            for (scanned in scannedFiles) {
+                            for ((index, scanned) in scannedFiles.withIndex()) {
+                                if (!isActive) break
+
+                                val currentNum = index + 1
+                                val progressRatio = if (totalFiles > 0) currentNum.toFloat() / totalFiles else 0f
+
+                                withContext(Dispatchers.Main) {
+                                    _importProgress.value = ImportProgress(
+                                        current = currentNum,
+                                        total = totalFiles,
+                                        fileName = scanned.relativePath,
+                                        progress = progressRatio
+                                    )
+                                }
+
                                 try {
                                     val req = CreateFileRequest(
                                         message = "Import ${scanned.relativePath} from $sourceOwner/$sourceRepo",
@@ -792,6 +865,7 @@ class RepositoryViewModel(application: Application) : AndroidViewModel(applicati
                             tempDir.deleteRecursively()
                         }
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         com.vineyard.fastgit.app.utils.AppLogger.e("RepositoryViewModel", "Source zipball transfer warning: ${e.message}", e)
                     }
 
@@ -801,6 +875,8 @@ class RepositoryViewModel(application: Application) : AndroidViewModel(applicati
                         onSuccess(newRepo)
                     }
                 }
+            } catch (e: CancellationException) {
+                com.vineyard.fastgit.app.utils.AppLogger.i("RepositoryViewModel", "Import coroutine cancelled.")
             } catch (e: Exception) {
                 com.vineyard.fastgit.app.utils.AppLogger.e("RepositoryViewModel", "Import repository failed: ${e.message}", e)
                 withContext(Dispatchers.Main) {
@@ -808,6 +884,7 @@ class RepositoryViewModel(application: Application) : AndroidViewModel(applicati
                 }
             } finally {
                 withContext(Dispatchers.Main) {
+                    _importProgress.value = null
                     _isLoading.value = false
                 }
             }
