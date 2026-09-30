@@ -15,13 +15,16 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vineyard.fastgit.app.models.Repository
 import com.vineyard.fastgit.app.ui.theme.*
+import com.vineyard.fastgit.app.viewmodel.ImportProgress
 import com.vineyard.fastgit.app.viewmodel.RepositoryViewModel
 import kotlinx.coroutines.launch
 
@@ -39,6 +42,7 @@ fun RepositoriesScreen(
     val selectedFilter by repositoryViewModel.selectedFilter.collectAsState()
     val isLoading by repositoryViewModel.isLoading.collectAsState()
     val statusMessage by repositoryViewModel.statusMessage.collectAsState()
+    val importProgress by repositoryViewModel.importProgress.collectAsState()
 
     var showCreateDialog by remember { mutableStateOf(showCreateDialogInitially) }
     var showImportDialog by remember { mutableStateOf(showImportDialogInitially) }
@@ -167,7 +171,7 @@ fun RepositoriesScreen(
                     },
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    if (isLoading && !isRefreshing) {
+                    if (isLoading && importProgress == null && !isRefreshing) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                         }
@@ -223,6 +227,109 @@ fun RepositoriesScreen(
                 Text(msg)
             }
         }
+    }
+
+    // Repository Import Progress Dialog (Matching ZIP upload and file deletion popups)
+    importProgress?.let { progress ->
+        AlertDialog(
+            onDismissRequest = { /* Modal: must cancel or wait to finish */ },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.CloudDownload,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Importing Repository Files",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Downloading archive, extracting files, and committing to new repository...",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        lineHeight = 18.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (progress.total > 0) {
+                                "Processing (${progress.current}/${progress.total}): ${progress.fileName}"
+                            } else {
+                                progress.fileName
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        if (progress.total > 0) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${(progress.progress * 100).toInt()}%",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    if (progress.total > 0) {
+                        LinearProgressIndicator(
+                            progress = { progress.progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(
+                    onClick = { repositoryViewModel.cancelImport() }
+                ) {
+                    Text(
+                        text = "Cancel",
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.Red
+                    )
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(20.dp)
+        )
     }
 
     // Repository Delete Confirmation Dialog
